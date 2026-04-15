@@ -2,14 +2,18 @@ import math
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsLineItem
 from PySide6.QtGui import QPainter, QPen, QColor, QBrush
 from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve
-
 from ui.node_item import NodeItem
 from ui.piece_item import RingItem, MarkerItem
+from core.rules import YinshEngine
 
 
 class GameView(QGraphicsView):
     def __init__(self):
         super().__init__()
+
+        # --- FIX: Boot up the brain FIRST ---
+        self.engine = YinshEngine()
+
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -24,8 +28,14 @@ class GameView(QGraphicsView):
         # State Tracking
         self.selected_ring = None
 
+        # State Tracking
+        self.selected_ring = None
+        self.visual_markers = {}  # <-- NEW: Keeps track of marker graphics
+
         self._generate_lattice_lines()
         self._generate_board_nodes()
+
+        # NOW it is safe to spawn pieces because the engine exists!
         self._spawn_test_pieces()
 
     def is_valid_node(self, q, r):
@@ -87,26 +97,34 @@ class GameView(QGraphicsView):
         marker = MarkerItem('blue')
         marker.setPos(x, y)
         self.scene.addItem(marker)
+        self.engine.add_marker(0, 0, 'blue')  # <--- TELL ENGINE
+        self.visual_markers[(0, 0)] = marker
 
         ring = RingItem(0, 0, 'red', self.handle_ring_click)
         ring.setPos(x, y)
         self.scene.addItem(ring)
+        self.engine.add_ring(0, 0, 'red')  # <--- TELL ENGINE
 
         # 2. Empty Red Ring
         x2, y2 = get_pixel_pos(0, -2)
         ring2 = RingItem(0, -2, 'red', self.handle_ring_click)
         ring2.setPos(x2, y2)
         self.scene.addItem(ring2)
+        self.engine.add_ring(0, -2, 'red')  # <--- TELL ENGINE
 
         # 3. Empty Blue Ring
         x3, y3 = get_pixel_pos(2, 0)
         ring3 = RingItem(2, 0, 'blue', self.handle_ring_click)
         ring3.setPos(x3, y3)
         self.scene.addItem(ring3)
+        self.engine.add_ring(2, 0, 'blue')  # <--- TELL ENGINE
 
     # --- LOGIC HANDLERS ---
     def handle_ring_click(self, ring_item):
         """Triggered when a player clicks a ring."""
+        if not self.engine.is_correct_turn(ring_item.color_str):
+            return  # Ignore the click completely
+
         # Deselect old
         if self.selected_ring:
             self.selected_ring.set_selected(False)
@@ -117,36 +135,56 @@ class GameView(QGraphicsView):
         print(f"Selected {ring_item.color_str} ring at ({ring_item.q}, {ring_item.r})")
 
     def handle_node_click(self, node_item):
-        """Triggered when a player clicks an empty node."""
         if self.selected_ring:
-            print(f"Sliding ring to ({node_item.q}, {node_item.r})")
+            start_q = self.selected_ring.q
+            start_r = self.selected_ring.r
+            end_q = node_item.q
+            end_r = node_item.r
 
-            # 1. Capture the start and end pixel coordinates
-            start_pos = self.selected_ring.pos()
-            end_pos = node_item.pos()
+            if self.engine.is_valid_move(start_q, start_r, end_q, end_r):
+                print(f"Sliding ring to ({end_q}, {end_r})")
 
-            # 2. Create the Animation Engine
-            # We attach it to 'self' so Python's garbage collector doesn't delete it mid-animation
-            self.move_anim = QVariantAnimation(self)
-            self.move_anim.setDuration(350)  # 350 milliseconds is a great, snappy speed
-            self.move_anim.setStartValue(start_pos)
-            self.move_anim.setEndValue(end_pos)
+                # --- NEW: Spawn the visual marker exactly where the ring is ---
+                # We do this BEFORE the animation so the ring slides off of it!
+                ring_color = self.selected_ring.color_str
+                new_marker = MarkerItem(ring_color)
+                new_marker.setPos(self.selected_ring.pos())
+                self.scene.addItem(new_marker)
 
-            # This makes the ring accelerate at the start and slow down at the end
-            self.move_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                # Remember to store it in our dictionary so it can be flipped later!
+                self.visual_markers[(start_q, start_r)] = new_marker
 
-            # 3. Connect the engine to the ring
-            # Every frame, the engine emits a new position. We tell the ring to move there.
-            ring_to_animate = self.selected_ring
-            self.move_anim.valueChanged.connect(ring_to_animate.setPos)
+                # --- Update engine and flip jumped markers ---
+                flipped_coords = self.engine.update_ring_position(start_q, start_r, end_q, end_r)
 
-            # 4. Press Play
-            self.move_anim.start()
+                for fq, fr in flipped_coords:
+                    if (fq, fr) in self.visual_markers:
+                        self.visual_markers[(fq, fr)].flip()
 
-            # 5. Instantly update the pure math/logic behind the scenes
-            self.selected_ring.q = node_item.q
-            self.selected_ring.r = node_item.r
+                # ... (Keep ALL of your animation code here exactly as it was) ...
+                start_pos = self.selected_ring.pos()
+                end_pos = node_item.pos()
 
-            # 6. Deselect the ring so the player can click something else
+                self.move_anim = QVariantAnimation(self)
+                self.move_anim.setDuration(350)
+                self.move_anim.setStartValue(start_pos)
+                self.move_anim.setEndValue(end_pos)
+                self.move_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+                ring_to_animate = self.selected_ring
+                self.move_anim.valueChanged.connect(ring_to_animate.setPos)
+                self.move_anim.start()
+
+                self.selected_ring.q = node_item.q
+                self.selected_ring.r = node_item.r
+                self.engine.switch_turn()
+
+            else:
+                # If the engine says no, we just deselect the ring and do nothing
+                pass
+
+
+
+                # Deselect the ring whether the move was valid or not
             self.selected_ring.set_selected(False)
             self.selected_ring = None

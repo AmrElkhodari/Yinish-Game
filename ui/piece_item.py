@@ -29,9 +29,15 @@ class MarkerItem(QGraphicsEllipseItem):
         self.setPen(QPen(border_color, 2))
 
     def flip(self):
-        """Toggles the color between white and black."""
-        self.current_color = 'black' if self.current_color == 'white' else 'white'
+        """Toggles the color between red and blue."""
+        # 1. Update the logic to use our new colors
+        self.current_color = 'blue' if self.current_color == 'red' else 'red'
+
+        # 2. Reassign the brushes and pens
         self._update_visuals()
+
+        # 3. Force PySide6 to instantly redraw the graphic on the screen
+        self.update()
 
 
 # In ui/piece_item.py (Update the RingItem class)
