@@ -1,4 +1,3 @@
-# In core/rules.py
 import copy
 
 
@@ -9,14 +8,40 @@ class YinshEngine:
         self.current_turn = 'red'
         self.scores = {'red': 0, 'blue': 0}
 
-        # --- NEW: Time Travel Memory ---
         self.history = []
         self.history_index = -1
-        self.save_history_state()  # Save the initial board state
+        self.save_history_state()
+
+    # --- NEW: INTERNET SERIALIZATION ---
+    def to_dict(self):
+        """Translates the board into JSON for the internet."""
+        return {
+            'rings': {f"{q},{r}": color for (q, r), color in self.rings.items()},
+            'markers': {f"{q},{r}": color for (q, r), color in self.markers.items()},
+            'current_turn': self.current_turn,
+            'scores': self.scores
+        }
+
+    def from_dict(self, data):
+        """Translates JSON from the internet back into board math."""
+        if not data: return
+
+        self.rings.clear()
+        for k, c in data.get('rings', {}).items():
+            parts = k.split(',')
+            self.rings[(int(parts[0]), int(parts[1]))] = c
+
+        self.markers.clear()
+        for k, c in data.get('markers', {}).items():
+            parts = k.split(',')
+            self.markers[(int(parts[0]), int(parts[1]))] = c
+
+        self.current_turn = data.get('current_turn', 'red')
+        self.scores = data.get('scores', {'red': 0, 'blue': 0})
+
+    # ------------------------------------
 
     def save_history_state(self):
-        """Takes a snapshot of the board."""
-        # If we go back in time and change the future, erase the old future
         if self.history_index < len(self.history) - 1:
             self.history = self.history[:self.history_index + 1]
 
@@ -30,7 +55,6 @@ class YinshEngine:
         self.history_index = len(self.history) - 1
 
     def load_history_state(self, index):
-        """Loads a snapshot from the past or future."""
         if 0 <= index < len(self.history):
             state = self.history[index]
             self.rings = copy.deepcopy(state['rings'])
@@ -41,13 +65,11 @@ class YinshEngine:
 
     def is_correct_turn(self, ring_color):
         if ring_color != self.current_turn:
-            print(f"❌ Invalid Selection: It is currently {self.current_turn.upper()}'s turn!")
             return False
         return True
 
     def switch_turn(self):
         self.current_turn = 'blue' if self.current_turn == 'red' else 'red'
-        print(f"\n--- 🎮 {self.current_turn.upper()}'S TURN ---")
 
     def add_ring(self, q, r, color):
         self.rings[(q, r)] = color
@@ -81,26 +103,17 @@ class YinshEngine:
         return (q, r) in self.rings or (q, r) in self.markers
 
     def is_valid_move(self, start_q, start_r, end_q, end_r, silent=False):
-        if not self.is_straight_line(start_q, start_r, end_q, end_r):
-            if not silent: print("❌ Invalid Move: Rings must slide in a straight line.")
-            return False
-
-        if self.is_occupied(end_q, end_r):
-            if not silent: print(f"❌ Invalid Move: Space ({end_q}, {end_r}) is already occupied!")
-            return False
+        if not self.is_straight_line(start_q, start_r, end_q, end_r): return False
+        if self.is_occupied(end_q, end_r): return False
 
         path = self.get_path_coordinates(start_q, start_r, end_q, end_r)
         jumped_over_marker = False
 
         for q, r in path:
-            if (q, r) in self.rings:
-                if not silent: print(f"❌ Invalid Move: Cannot jump over the ring at ({q}, {r}).")
-                return False
-
+            if (q, r) in self.rings: return False
             if (q, r) in self.markers:
                 jumped_over_marker = True
             elif jumped_over_marker:
-                if not silent: print("❌ Invalid Move: Must land in the first empty space after jumping a marker.")
                 return False
 
         return True
@@ -122,12 +135,10 @@ class YinshEngine:
         return path
 
     def check_for_sequence(self):
-        """Finds the longest contiguous line of markers of the same color (can be > 5)"""
         directions = [(1, 0), (0, 1), (-1, 1)]
 
         for (q, r), color in self.markers.items():
             for dq, dr in directions:
-                # Make sure we only check from the very START of a sequence to avoid duplicates
                 prev_q, prev_r = q - dq, r - dr
                 if self.markers.get((prev_q, prev_r)) == color:
                     continue
@@ -135,7 +146,6 @@ class YinshEngine:
                 sequence = [(q, r)]
                 current_q, current_r = q + dq, r + dr
 
-                # Keep walking the line as long as the color matches
                 while self.markers.get((current_q, current_r)) == color:
                     sequence.append((current_q, current_r))
                     current_q += dq

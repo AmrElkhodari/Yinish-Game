@@ -1,10 +1,8 @@
-# In ui/game_scene.py
 import math
 import random
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsLineItem, QLabel
 from PySide6.QtGui import QPainter, QPen, QColor, QBrush, QPixmap, QFont
-from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve, QUrl
-# --- NEW: Upgraded to QMediaPlayer to support .mp3 files ---
+from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve, QUrl, QObject, Signal, QTimer, QPointF
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ui.node_item import NodeItem
@@ -12,9 +10,25 @@ from ui.piece_item import RingItem, MarkerItem
 from core.rules import YinshEngine
 
 
+# --- Safely handles background internet threads ---
+class NetworkSignals(QObject):
+    data_received = Signal(dict)
+
+
 class GameView(QGraphicsView):
-    def __init__(self):
+    def __init__(self, p1_name="Player 1", p2_name="Player 2", db=None, room_code=None, local_color=None):
         super().__init__()
+
+        self.p1_name = p1_name
+        self.p2_name = p2_name
+
+        # Multiplayer Variables
+        self.db = db
+        self.room_code = room_code
+        self.local_color = local_color
+
+        self.network_signals = NetworkSignals()
+        self.network_signals.data_received.connect(self._on_remote_update)
 
         self.engine = YinshEngine()
         self.scene = QGraphicsScene()
@@ -23,7 +37,6 @@ class GameView(QGraphicsView):
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         bg_pixmap = QPixmap("bg.png")
@@ -43,24 +56,109 @@ class GameView(QGraphicsView):
         self.game_is_over = False
         self.app_state = 'PLAYING'
 
-        self._setup_audio()  # Initialize the new MP3 audio engine
+        self._setup_audio()
         self._generate_lattice_lines()
         self._generate_board_nodes()
-        self._spawn_random_rings()
         self._setup_ui_overlays()
 
-    # --- NEW: MP3 Audio Manager ---
+        # Sync Initialization
+        if self.db and self.room_code:
+            self.db_stream = self.db.child("rooms").child(self.room_code).stream(self._db_listener)
+            if self.local_color == 'red':
+                self._spawn_random_rings()
+                self._push_state_to_db()
+        else:
+            self._spawn_random_rings()
+
+    # --- Pyrebase Client Sync Logic ---
+    def _db_listener(self, message):
+        if self.db and self.room_code:
+            full_data = self.db.child("rooms").child(self.room_code).get().val()
+            if full_data:
+                self.network_signals.data_received.emit(full_data)
+
+    def _on_remote_update(self, data):
+        # 1. Check if an opponent just joined!
+        if self.local_color == 'red':
+            new_joiner = data.get('joiner')
+            if new_joiner and new_joiner != 'Waiting...' and self.p2_name != new_joiner:
+                self.p2_name = new_joiner
+                self.play_sound('score')
+                self._update_ui_state()
+                self._show_instruction(f"✨ {new_joiner} has joined the game!", timeout=3000)
+
+        # 2. Ignore our own moves reflecting back to us
+        if data.get('last_mover') == self.local_color:
+            return
+
+            # 3. Process actual board movement
+        if 'rings' in data and data.get('last_mover') != 'none':
+
+            # Animate the opponent's move
+            current_rings = set(self.engine.rings.keys())
+
+            new_rings_data = data.get('rings', {})
+            new_rings = set()
+            for k in new_rings_data.keys():
+                parts = k.split(',')
+                new_rings.add((int(parts[0]), int(parts[1])))
+
+            start_pos = list(current_rings - new_rings)
+            end_pos = list(new_rings - current_rings)
+
+            if len(start_pos) == 1 and len(end_pos) == 1:
+                sq, sr = start_pos[0]
+                eq, er = end_pos[0]
+                ring_visual = self.visual_rings.get((sq, sr))
+
+                if ring_visual:
+                    start_pixel = ring_visual.pos()
+                    end_x = self.board_scale * math.sqrt(3) * (eq + er / 2)
+                    end_y = self.board_scale * 3 / 2 * er
+                    end_pixel = QPointF(end_x, end_y)
+
+                    self.remote_anim = QVariantAnimation(self)
+                    self.remote_anim.setDuration(350)
+                    self.remote_anim.setStartValue(start_pixel)
+                    self.remote_anim.setEndValue(end_pixel)
+                    self.remote_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                    self.remote_anim.valueChanged.connect(ring_visual.setPos)
+
+                    self.remote_anim.finished.connect(lambda: self._apply_remote_update(data))
+                    self.remote_anim.start()
+                    self.play_sound('move')
+                    return
+
+            self._apply_remote_update(data)
+
+    def _apply_remote_update(self, data):
+        if self.engine.history_index < len(self.engine.history) - 1:
+            self.instruction_label.hide()
+
+        self.engine.from_dict(data)
+        self.engine.save_history_state()
+        self._sync_pieces_from_engine()
+        self._update_ui_state()
+
+    def _push_state_to_db(self):
+        if self.db and self.room_code:
+            state = self.engine.to_dict()
+            state['last_mover'] = self.local_color
+            self.db.child("rooms").child(self.room_code).update(state)
+
+    # ---------------------------------
+
     def _setup_audio(self):
         self.sounds = {}
-        self.audio_outputs = {}  # We must keep a reference to outputs so they aren't deleted
+        self.audio_outputs = {}
 
-        # Mapping your specific .mp3 files to action keys
         sound_files = {
             'move': 'piece_move.mp3',
             'error': 'wrong_move.mp3',
             'mark_remove': 'mark_remove.mp3',
             'ring_remove': 'ring_remove.mp3',
-            'game_over': 'game_over.mp3'
+            'game_over': 'game_over.mp3',
+            'score': 'score.wav'
         }
 
         for key, filename in sound_files.items():
@@ -68,51 +166,54 @@ class GameView(QGraphicsView):
             audio = QAudioOutput(self)
             player.setAudioOutput(audio)
             player.setSource(QUrl.fromLocalFile(f"sounds/{filename}"))
-
             self.sounds[key] = player
             self.audio_outputs[key] = audio
 
     def play_sound(self, key):
-        """Helper to instantly rewind and play an MP3."""
         if key in self.sounds:
             self.sounds[key].setPosition(0)
             self.sounds[key].play()
 
+    # --- TIME TRAVEL CONTROLS ---
+    def go_back_in_time(self):
+        if self.engine.history_index > 0:
+            self.engine.load_history_state(self.engine.history_index - 1)
+            self._sync_pieces_from_engine()
+            self._update_ui_state()
+            self._show_instruction("⏪ VIEWING PAST (Press Right Arrow to go forward)")
+
+    def go_forward_in_time(self):
+        if self.engine.history_index < len(self.engine.history) - 1:
+            self.engine.load_history_state(self.engine.history_index + 1)
+            self._sync_pieces_from_engine()
+            self._update_ui_state()
+            if self.engine.history_index == len(self.engine.history) - 1:
+                self.instruction_label.hide()
+            else:
+                self._show_instruction("⏪ VIEWING PAST (Press Right Arrow to go forward)")
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Left:
-            if self.engine.history_index > 0:
-                self.engine.load_history_state(self.engine.history_index - 1)
-                self._sync_pieces_from_engine()
-                self._update_ui_state()
-                self._show_instruction("⏪ VIEWING PAST MOVE (Press Right Arrow to go forward)")
+            self.go_back_in_time()
         elif event.key() == Qt.Key_Right:
-            if self.engine.history_index < len(self.engine.history) - 1:
-                self.engine.load_history_state(self.engine.history_index + 1)
-                self._sync_pieces_from_engine()
-                self._update_ui_state()
-                if self.engine.history_index == len(self.engine.history) - 1:
-                    self.instruction_label.hide()
-                else:
-                    self._show_instruction("⏪ VIEWING PAST MOVE (Press Right Arrow to go forward)")
+            self.go_forward_in_time()
         super().keyPressEvent(event)
 
     def _setup_ui_overlays(self):
         base_font = QFont("Segoe UI", 16, QFont.Weight.Bold)
 
-        self.red_bar = QLabel("🔴 RED SCORE: 0", self)
+        self.red_bar = QLabel(f"🔴 {self.p1_name.upper()}: 0", self)
         self.red_bar.setFont(base_font)
         self.red_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.blue_bar = QLabel("🔵 BLUE SCORE: 0", self)
+        self.blue_bar = QLabel(f"🔵 {self.p2_name.upper()}: 0", self)
         self.blue_bar.setFont(base_font)
         self.blue_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.game_over_label = QLabel("GAME OVER", self)
         self.game_over_label.setFont(QFont("Segoe UI", 56, QFont.Weight.Black))
-        self.game_over_label.setStyleSheet("""
-            background-color: rgba(10, 10, 15, 0.9); 
-            color: #FFD700; padding: 60px 120px; border-radius: 30px; border: 4px solid #FFD700;
-        """)
+        self.game_over_label.setStyleSheet(
+            "background-color: rgba(10, 10, 15, 0.9); color: #FFD700; padding: 60px 120px; border-radius: 30px; border: 4px solid #FFD700;")
         self.game_over_label.hide()
 
         self.instruction_label = QLabel("", self)
@@ -123,15 +224,17 @@ class GameView(QGraphicsView):
 
         self._update_ui_state()
 
-    def _show_instruction(self, text):
+    def _show_instruction(self, text, timeout=None):
         self.instruction_label.setText(text)
         self.instruction_label.adjustSize()
         self.instruction_label.move((self.viewport().width() - self.instruction_label.width()) // 2, 80)
         self.instruction_label.show()
+        if timeout:
+            QTimer.singleShot(timeout, self.instruction_label.hide)
 
     def _update_ui_state(self):
-        self.red_bar.setText(f"🔴 RED SCORE: {self.engine.scores['red']}")
-        self.blue_bar.setText(f"🔵 BLUE SCORE: {self.engine.scores['blue']}")
+        self.red_bar.setText(f"🔴 {self.p1_name.upper()}: {self.engine.scores['red']}")
+        self.blue_bar.setText(f"🔵 {self.p2_name.upper()}: {self.engine.scores['blue']}")
 
         active_red = "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff4b4b, stop:1 #c62828); color: white; padding: 12px 30px; border-radius: 20px; border: 3px solid #ffcccc;"
         active_blue = "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #29b6f6, stop:1 #0277bd); color: white; padding: 12px 30px; border-radius: 20px; border: 3px solid #b3e5fc;"
@@ -150,15 +253,19 @@ class GameView(QGraphicsView):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.fitInView(self.scene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+        # Kept the padding tweak so your board stays nicely centered!
+        rect = self.scene.itemsBoundingRect()
+        rect.adjust(-20, -20, 20, 60)
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
         w = self.viewport().width()
         h = self.viewport().height()
 
         self.red_bar.move(20, 20)
         self.blue_bar.move(w - self.blue_bar.width() - 20, h - self.blue_bar.height() - 20)
-
         self.game_over_label.move((w - self.game_over_label.width()) // 2, (h - self.game_over_label.height()) // 2)
+
         if hasattr(self, 'instruction_label'):
             self.instruction_label.move((w - self.instruction_label.width()) // 2, 80)
 
@@ -268,9 +375,12 @@ class GameView(QGraphicsView):
             self.visual_rings[(q, r)] = ring
 
     # --- LOGIC HANDLERS ---
-
     def handle_marker_click(self, marker_item):
-        if self.game_is_over or self.engine.history_index < len(self.engine.history) - 1: return
+        if self.game_is_over: return
+
+        if self.local_color and self.engine.current_turn != self.local_color:
+            self.play_sound('error')
+            return
 
         if self.app_state == 'SELECT_MARKERS':
             if (marker_item.q, marker_item.r) in self.pending_sequence:
@@ -286,14 +396,18 @@ class GameView(QGraphicsView):
                     marker_visual = self.visual_markers.pop((q, r))
                     self.scene.removeItem(marker_visual)
 
-                self.play_sound('mark_remove')  # SOUND: Markers removed
+                self.play_sound('mark_remove')
                 self.app_state = 'SELECT_RING'
                 self._show_instruction(f"✨ {self.scoring_color.upper()}: Now click one of your rings to remove it.")
             else:
-                self.play_sound('error')  # SOUND: Wrong marker clicked
+                self.play_sound('error')
 
     def handle_ring_click(self, ring_item):
-        if self.game_is_over or self.engine.history_index < len(self.engine.history) - 1: return
+        if self.game_is_over: return
+
+        if self.local_color and self.engine.current_turn != self.local_color:
+            self.play_sound('error')
+            return
 
         if self.app_state == 'SELECT_RING':
             if ring_item.color_str == self.scoring_color:
@@ -302,27 +416,28 @@ class GameView(QGraphicsView):
                 self.scene.removeItem(ring_visual)
 
                 self.engine.scores[self.scoring_color] += 1
-                self.play_sound('ring_remove')  # SOUND: Ring removed
+                self.play_sound('ring_remove')
                 self.instruction_label.hide()
                 self._update_ui_state()
 
                 if self.engine.scores[self.scoring_color] >= 3:
                     self.game_is_over = True
-                    self.play_sound('game_over')  # SOUND: Game Over!
+                    self.play_sound('game_over')
                     self.game_over_label.setText(f"✨ {self.scoring_color.upper()} WINS! ✨")
                     self.game_over_label.show()
                     self.game_over_label.raise_()
+                    self._push_state_to_db()
                 else:
                     self.app_state = 'PLAYING'
                     self.process_scoring()
             else:
-                self.play_sound('error')  # SOUND: Wrong ring clicked
+                self.play_sound('error')
             return
 
         if self.app_state != 'PLAYING': return
 
         if not self.engine.is_correct_turn(ring_item.color_str):
-            self.play_sound('error')  # SOUND: Wrong turn
+            self.play_sound('error')
             return
 
         if self.selected_ring:
@@ -333,8 +448,11 @@ class GameView(QGraphicsView):
         self._update_valid_move_indicators()
 
     def handle_node_click(self, node_item):
-        if self.game_is_over or self.app_state != 'PLAYING' or self.engine.history_index < len(
-            self.engine.history) - 1: return
+        if self.game_is_over or self.app_state != 'PLAYING': return
+
+        if self.local_color and self.engine.current_turn != self.local_color:
+            self.play_sound('error')
+            return
 
         if self.selected_ring:
             start_q = self.selected_ring.q
@@ -343,7 +461,7 @@ class GameView(QGraphicsView):
             end_r = node_item.r
 
             if self.engine.is_valid_move(start_q, start_r, end_q, end_r):
-                self.play_sound('move')  # SOUND: Valid move sliding
+                self.play_sound('move')
 
                 ring_color = self.selected_ring.color_str
                 new_marker = MarkerItem(start_q, start_r, ring_color, self.handle_marker_click)
@@ -375,7 +493,7 @@ class GameView(QGraphicsView):
                 self.visual_rings[(end_q, end_r)] = self.visual_rings.pop((start_q, start_r))
                 self.process_scoring()
             else:
-                self.play_sound('error')  # SOUND: Invalid destination clicked
+                self.play_sound('error')
 
             self.selected_ring.set_selected(False)
             self.selected_ring = None
@@ -387,7 +505,7 @@ class GameView(QGraphicsView):
         if sequence:
             self.scoring_color = color
             if len(sequence) == 5:
-                self.play_sound('mark_remove')  # SOUND: 5 in a row instantly removed
+                self.play_sound('mark_remove')
                 for q, r in sequence:
                     del self.engine.markers[(q, r)]
                     marker_visual = self.visual_markers.pop((q, r))
@@ -404,3 +522,4 @@ class GameView(QGraphicsView):
             self.engine.switch_turn()
             self.engine.save_history_state()
             self._update_ui_state()
+            self._push_state_to_db()
