@@ -5,10 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="b3413aed-f4c0-4a7a-afe6-2d440cfb5864" name="Changes" comment="Completed basic UI">
-      <change afterPath="$PROJECT_DIR$/core/rules.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/Project.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Project.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bg.png" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/rules.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/rules.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ui/game_scene.py" beforeDir="false" afterPath="$PROJECT_DIR$/ui/game_scene.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ui/node_item.py" beforeDir="false" afterPath="$PROJECT_DIR$/ui/node_item.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ui/piece_item.py" beforeDir="false" afterPath="$PROJECT_DIR$/ui/piece_item.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -38,7 +39,7 @@
   "keyToString": {
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "Python.game_scene.executor": "Run",
-    "Python.main.executor": "Run",
+    "Python.main.executor": "Debug",
     "Python.main_window.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
@@ -49,6 +50,11 @@
     "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
 }]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\user\Desktop\Collage Study\AI1\Yinish-Game" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
