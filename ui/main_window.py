@@ -60,10 +60,16 @@ class MainWindow(QMainWindow):
 
         btn_style = "QPushButton { background-color: #29B6F6; color: white; border-radius: 10px; padding: 15px; font-size: 18px; font-weight: bold; } QPushButton:hover { background-color: #039BE5; }"
 
+        # --- NEW: AI Button (Purple) ---
+        btn_ai = QPushButton("Play vs AI (Single Player)")
+        btn_ai.setFixedSize(350, 60)
+        btn_ai.setStyleSheet(btn_style.replace("#29B6F6", "#AB47BC").replace("#039BE5", "#8E24AA"))
+        btn_ai.clicked.connect(self.on_play_ai_clicked)
+
         btn_local = QPushButton("Play Local (2 Player)")
         btn_local.setFixedSize(350, 60)
         btn_local.setStyleSheet(btn_style)
-        btn_local.clicked.connect(self.start_local_game)
+        btn_local.clicked.connect(self.start_two_player_game)
 
         btn_online = QPushButton("Play Online (Multiplayer)")
         btn_online.setFixedSize(350, 60)
@@ -71,6 +77,8 @@ class MainWindow(QMainWindow):
         btn_online.clicked.connect(self.check_online_mode)
 
         layout.addWidget(title)
+        layout.addWidget(btn_ai, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addSpacing(15)
         layout.addWidget(btn_local, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addSpacing(15)
         layout.addWidget(btn_online, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -223,3 +231,26 @@ class MainWindow(QMainWindow):
 
         self.stack.addWidget(self.game_screen)
         self.stack.setCurrentIndex(3)
+
+    # --- Button Actions ---
+    def on_play_ai_clicked(self):
+        # Index 1 is offline game, Index 3 is online. We'll use Index 1.
+        self.game_screen = GameView(p1_name="Player (Red)", p2_name="AI (Blue)", ai_mode=True)
+
+        # Replace the old game screen with the new one
+        old_game = self.stack.widget(1)
+        self.stack.removeWidget(old_game)
+        old_game.deleteLater()
+
+        self.stack.insertWidget(1, self.game_screen)
+        self.stack.setCurrentIndex(1)
+
+    def start_two_player_game(self):
+        self.game_screen = GameView(p1_name="Player 1", p2_name="Player 2", ai_mode=False)
+
+        old_game = self.stack.widget(1)
+        self.stack.removeWidget(old_game)
+        old_game.deleteLater()
+
+        self.stack.insertWidget(1, self.game_screen)
+        self.stack.setCurrentIndex(1)
