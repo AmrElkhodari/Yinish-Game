@@ -9,8 +9,9 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from ui.node_item import NodeItem
 from ui.piece_item import RingItem, MarkerItem
 from core.rules import YinshEngine
-from core.ai import YinshAI
-
+from core.ai_fast import FastEngine
+from core.ai_slow import SlowEngine
+from core.ai_impossible import ImpossibleEngine
 
 # --- NEW: BACKGROUND THREAD FOR AI ---
 class AIWorker(QThread):
@@ -19,11 +20,22 @@ class AIWorker(QThread):
     def __init__(self, engine_snapshot, ai_color):
         super().__init__()
         self.engine_snapshot = engine_snapshot
-        # Depth 3 is fast enough for UI, smart enough to beat most people
-        self.ai = YinshAI(ai_color, max_depth=3)
+
+        # --- EASILY SWITCH ENGINES HERE ---
+        # Change this string to 'fast', 'slow', or 'impossible' to test them
+        self.engine_type = 'fast'
+
+        if self.engine_type == 'fast':
+            self.ai = FastEngine(ai_color, max_depth=3)
+        elif self.engine_type == 'slow':
+            self.ai = SlowEngine(ai_color, max_depth=3)
+        elif self.engine_type == 'impossible':
+            self.ai = ImpossibleEngine(ai_color)  # No depth passed here!
 
     def run(self):
         # This runs invisibly in the background so the UI doesn't freeze
+        print(f"🤖 AI Thinking using {self.engine_type.upper()} ENGINE...")
+
         best_move = self.ai.get_best_move(self.engine_snapshot)
         self.move_calculated.emit(best_move)
 

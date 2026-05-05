@@ -33,3 +33,39 @@ The Single Player mode uses a dedicated background thread to run a game-tree sea
 ```bash
 git clone [https://github.com/YOUR_USERNAME/YINSH-Game.git](https://github.com/YOUR_USERNAME/YINSH-Game.git)
 cd YINSH-Game
+```
+
+### 2. Install Dependencies
+Make sure you have Python installed, then run:
+```bash
+pip install -r requirements.txt
+```
+*(Requires PySide6 and Pyrebase4)*
+
+### 3. Firebase Configuration (For Multiplayer)
+To keep databases secure, this project uses a "Bring Your Own Database" architecture. To enable online multiplayer:
+1. Create a free project on [Firebase](https://firebase.google.com/).
+2. Create a Realtime Database and set the security rules to allow reading/writing to the `/rooms` node.
+3. Locate your Web App Client Configuration block.
+4. Rename `config.example.json` to `config.json` and paste your public keys inside.
+
+*(Note: Local 2-Player and AI modes work perfectly without Firebase configuration).*
+
+## 🎮 How to Play
+
+Run the application from your terminal:
+```bash
+python main.py
+```
+
+* **Play vs AI:** Launches a local game where Player 2 is controlled by the Minimax algorithm.
+* **Play Local:** Hot-seat multiplayer for two players sharing the same mouse and screen.
+* **Play Online:** Enter your name to generate a 5-letter Room Code. Share the code with a friend so they can join your live game.
+
+## 📁 Repository Structure
+* `/core`: Contains the pure Python mathematical logic, the `YinshEngine` state machine, and the `YinshAI` algorithm.
+* `/ui`: Contains the PySide6 visual components, animations, multithreading logic, and window managers.
+* `/sounds`: `.mp3` and `.wav` audio assets triggered by game events.
+
+---
+*Developed as a Computer Science AI & Software Engineering Project.*
